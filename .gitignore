@@ -1,0 +1,41 @@
+# Qt build outputs
+build-*/
+debug/
+release/
+moc_*.cpp
+qrc_*.cpp
+ui_*.h
+*.o
+*.obj
+Makefile
+Makefile.Debug
+Makefile.Release
+.qmake.stash
+object_script.*
+moc_predefs.h
+
+# Qt user config
+*.pro.user
+
+# Executables
+*.exe
+*.out
+*.app
+
+# IDE / editor
+.vs/
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Claude Code
+.claude/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Environment (contains secrets)
+.env
