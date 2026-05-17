@@ -1,0 +1,16 @@
+#ifndef OPERATEDB
+#define OPERATEDB
+
+#include <QObject>
+
+class OperateDb : public QObject
+{
+     Q_OBJECT
+public:
+    explicit OperateDb(QObject *parent = nullptr);
+
+signals:
+
+};
+
+#endif // OPERATEDB
