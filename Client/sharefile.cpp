@@ -50,13 +50,16 @@ void ShareFile::on_ok_pb_clicked()
     qDebug() << "1. 源文件路径:" << sharePath;
     QList<QListWidgetItem*>pItems = ui->listWidget->selectedItems();
     int friendcount = pItems.size();
-    PDUPtr pdu = makePDU(32*friendcount+sharePath.toStdString().size()+1);
-    for(int i =0 ;i<friendcount;i++){
-        memcpy(pdu->caMsg+i*32,ui->listWidget->item(i)->text().toStdString().c_str(),32);
+    PDUPtr pdu = makePDU(32 * friendcount + sharePath.toStdString().size() + 1);
+    for (int i = 0; i < friendcount; i++) {
+        std::string friendName = pItems[i]->text().toStdString();
+        memcpy(pdu->caMsg + i * 32, friendName.c_str(), 32);
     }
-    memcpy(pdu->caMsg+friendcount*32,sharePath.toStdString().c_str(),sharePath.toStdString().size());
-    memcpy(pdu->caData,strName.toStdString().c_str(),32);
-    memcpy(pdu->caData+32,&friendcount,sizeof(int));
+    std::string sharePathStr = sharePath.toStdString();
+    std::string strNameStr = strName.toStdString();
+    memcpy(pdu->caMsg + friendcount * 32, sharePathStr.c_str(), sharePathStr.size());
+    memcpy(pdu->caData, strNameStr.c_str(), 32);
+    memcpy(pdu->caData + 32, &friendcount, sizeof(int));
     pdu->uiType = ENUM_MSG_TYPE_SHARE_FILE_REQUEST;
     Client::getInstance().sendMsg(pdu.get());
 

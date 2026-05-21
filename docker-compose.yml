@@ -1,0 +1,39 @@
+version: "3.8"
+
+services:
+  db:
+    image: mysql:8.0
+    container_name: wonchat-mysql
+    restart: unless-stopped
+    environment:
+      MYSQL_ROOT_PASSWORD: ${DB_PASS:-wonchat123}
+      MYSQL_DATABASE: ${DB_NAME:-wonchat}
+    ports:
+      - "${DB_PORT:-3306}:3306"
+    volumes:
+      - mysql_data:/var/lib/mysql
+      - ./schema.sql:/docker-entrypoint-initdb.d/01-schema.sql
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  server:
+    build: .
+    container_name: wonchat-server
+    restart: unless-stopped
+    ports:
+      - "${SERVER_PORT:-8888}:8888"
+    environment:
+      DB_HOST: db
+      DB_PORT: 3306
+      DB_USER: root
+      DB_PASS: ${DB_PASS:-wonchat123}
+      DB_NAME: ${DB_NAME:-wonchat}
+    depends_on:
+      db:
+        condition: service_healthy
+
+volumes:
+  mysql_data:

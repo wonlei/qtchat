@@ -1,0 +1,36 @@
+name: Build & Test
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+    branches: [master]
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential cmake qtbase5-dev libqt5sql5-mysql
+
+      - name: Configure
+        run: cmake -B build -DCMAKE_BUILD_TYPE=Debug -DBUILD_TESTS=ON
+
+      - name: Build
+        run: cmake --build build -j$(nproc)
+
+      - name: Run unit tests
+        working-directory: build
+        run: ctest --output-on-failure
+
+      - name: Install Python test deps
+        if: false  # integration tests require MySQL + running server, skip in CI for now
+        run: pip install pytest
+
+      - name: Run integration tests
+        if: false  # requires MySQL + server, run locally with docker-compose
+        run: python tools/integration_test.py --host 127.0.0.1 --port 5000

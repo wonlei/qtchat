@@ -17,15 +17,18 @@ Chat::~Chat()
 void Chat::on_send_PB_clicked()
 {
     QString sendMsg = ui->input_LE->text();
-    if(sendMsg == nullptr){
+    if (sendMsg.isEmpty()) {
         return;
     }
-    PDUPtr pdu = makePDU(sendMsg.toStdString().size()+1);
+    PDUPtr pdu = makePDU(sendMsg.toStdString().size() + 1);
     ui->input_LE->clear();
     pdu->uiType = ENUM_MSG_TYPE_CHAT_REQUEST;
-    memcpy(pdu->caData,Client::getInstance().m_strLoginName.toStdString().c_str(),32);
-    memcpy(pdu->caData+32,m_strChatName.toStdString().c_str(),32);
-    memcpy(pdu->caMsg,sendMsg.toStdString().c_str(),sendMsg.toStdString().size());
+    std::string loginName = Client::getInstance().m_strLoginName.toStdString();
+    std::string chatName = m_strChatName.toStdString();
+    std::string msgStr = sendMsg.toStdString();
+    memcpy(pdu->caData, loginName.c_str(), 32);
+    memcpy(pdu->caData + 32, chatName.c_str(), 32);
+    memcpy(pdu->caMsg, msgStr.c_str(), msgStr.size());
     Client::getInstance().sendMsg(pdu.get());
 }
 
@@ -39,8 +42,10 @@ void Chat::requestHistory()
 {
     PDUPtr pdu = makePDU();
     pdu->uiType = ENUM_MSG_TYPE_CHAT_HISTORY_REQUEST;
-    memcpy(pdu->caData, Client::getInstance().m_strLoginName.toStdString().c_str(), 32);
-    memcpy(pdu->caData + 32, m_strChatName.toStdString().c_str(), 32);
+    std::string loginName = Client::getInstance().m_strLoginName.toStdString();
+    std::string chatName = m_strChatName.toStdString();
+    memcpy(pdu->caData, loginName.c_str(), 32);
+    memcpy(pdu->caData + 32, chatName.c_str(), 32);
     Client::getInstance().sendMsg(pdu.get());
 }
 

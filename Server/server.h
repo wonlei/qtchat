@@ -3,6 +3,8 @@
 
 #include <QMainWindow>
 
+class OperateDB;
+
 class Server : public QMainWindow
 {
 
@@ -14,7 +16,7 @@ public:
     QString m_strlIP;
     quint16 m_usPort;
     QString m_strRootPath;
-private:
+    OperateDB* m_db = nullptr;
 private:
     explicit Server(QWidget *parent = nullptr);
     Server(const Server& instance) = delete;

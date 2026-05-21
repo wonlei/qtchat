@@ -17,21 +17,33 @@ DEFINES += QT_DEPRECATED_WARNINGS
 
 SOURCES += \
     clienttask.cpp \
+    ../common/config.cpp \
+    logmanager.cpp \
     main.cpp \
+    ../common/messagedispatcher.cpp \
     msghandler.cpp \
     mytcpserver.cpp \
     mytcpsocket.cpp \
     operatedb.cpp \
     ../common/protocol.cpp \
+    ../common/packet.cpp \
+    ../common/password.cpp \
+    ../common/pathsafety.cpp \
     server.cpp
 
 HEADERS += \
     clienttask.h \
+    ../common/config.h \
+    logmanager.h \
+    ../common/messagedispatcher.h \
     msghandler.h \
     mytcpserver.h \
     mytcpsocket.h \
     operatedb.h \
     ../common/protocol.h \
+    ../common/packet.h \
+    ../common/password.h \
+    ../common/pathsafety.h \
     server.h
 
 # Default rules for deployment.

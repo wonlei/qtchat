@@ -2,23 +2,35 @@
 #define MYTCPSOCKET_H
 
 #include "msghandler.h"
+#include "../common/messagedispatcher.h"
 #include "../common/protocol.h"
 
 #include <memory>
 #include <QObject>
-#include <qtcpsocket.h>
+#include <QSslSocket>
+#include <QTimer>
 #include <QDebug>
 
-class MyTcpSocket : public QTcpSocket
+class OperateDB;
+class MyTcpServer;
+
+class MyTcpSocket : public QSslSocket
 {
     Q_OBJECT
 public:
 
     QString m_strLoginName;
     std::unique_ptr<MsgHandler> m_pmh;
+    MessageDispatcher m_dispatcher;
     QByteArray buffer;
-    MyTcpSocket();
+    bool m_bUseTls = false;
+    QTimer* m_heartbeatTimer;
+    static const int HEARTBEAT_TIMEOUT_MS = 30000;
+    MyTcpSocket(OperateDB& db, MyTcpServer* server, const QString& rootPath);
      ~MyTcpSocket();
+    OperateDB& m_db;
+    MyTcpServer* m_server;
+    void startEncryption();
 public slots:
     PDUPtr handleMsg(PDU* pdu);
     void recvMsg();

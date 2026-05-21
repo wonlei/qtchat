@@ -11,7 +11,8 @@ USE wonchat;
 CREATE TABLE IF NOT EXISTS user_info (
     id      INT AUTO_INCREMENT PRIMARY KEY,
     name    VARCHAR(32)  NOT NULL UNIQUE,
-    pwd     CHAR(32)     NOT NULL,            -- SHA256 原始 32 字节
+    pwd     CHAR(64)     NOT NULL,            -- PBKDF2-HMAC-SHA256 64 hex chars
+    salt    CHAR(32)     NOT NULL,            -- 16-byte random salt, hex encoded
     online  TINYINT(1)   NOT NULL DEFAULT 0
 ) ENGINE=InnoDB;
 
@@ -34,4 +35,14 @@ CREATE TABLE IF NOT EXISTS message (
     created_at  DATETIME      NOT NULL DEFAULT CURRENT_TIMESTAMP,
     INDEX idx_sender_receiver (sender, receiver),
     INDEX idx_created_at (created_at)
+) ENGINE=InnoDB;
+
+-- 离线消息表（接收方当时不在线，登录后推送并清空）
+CREATE TABLE IF NOT EXISTS offline_message (
+    id          INT AUTO_INCREMENT PRIMARY KEY,
+    sender      VARCHAR(32)   NOT NULL,
+    receiver    VARCHAR(32)   NOT NULL,
+    content     TEXT          NOT NULL,
+    created_at  DATETIME      NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    INDEX idx_receiver (receiver)
 ) ENGINE=InnoDB;

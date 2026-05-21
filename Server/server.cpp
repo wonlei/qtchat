@@ -1,8 +1,9 @@
 #include "server.h"
 #include "mytcpserver.h"
+#include "operatedb.h"
+#include "../common/config.h"
 
-#include <QFile>
-#include<QDebug>
+#include <QDebug>
 
 Server::Server(QWidget *parent )
     : QMainWindow(parent)
@@ -13,23 +14,33 @@ Server::Server(QWidget *parent )
 
 Server::~Server()
 {
+    delete m_db;
 }
 
 void Server::loadConfig()
 {
-    QFile file(":/connect.config");
-    if(file.open(QIODevice::ReadOnly)){
-        QString s = file.readAll();
-        QStringList slist=s.split("\r\n");
-        m_strlIP=slist[0];
-        m_usPort=slist[1].toUShort();
-        m_strRootPath = slist[2];
-        //qDebug()<<m_strlIP<<" "<<m_usPort;
-        file.close();
-    }else{
-        qDebug() << "打印失败";
+    AppConfig cfg;
+    if (!cfg.loadFromFile(":/config.json")) {
+        // Fallback to legacy format
+        QFile file(":/connect.config");
+        if (file.open(QIODevice::ReadOnly)) {
+            cfg.loadLegacy(file.readAll());
+            file.close();
+        }
     }
-    qDebug()<<"m_strlIP"<<m_strlIP<<" m_usPort"<<m_usPort;
+    m_strlIP     = cfg.serverIp;
+    m_usPort     = cfg.serverPort;
+    m_strRootPath = cfg.rootPath;
+
+    m_db = new OperateDB;
+    m_db->setConfig(cfg);
+    m_db->init();
+
+    MyTcpServer::getInstance().setDb(*m_db);
+    MyTcpServer::getInstance().setRootPath(m_strRootPath);
+    MyTcpServer::getInstance().m_bUseTls = cfg.useTls;
+
+    qDebug()<<"m_strlIP"<<m_strlIP<<" m_usPort"<<m_usPort<<" rootPath"<<m_strRootPath;
 }
 
 Server &Server::getInstance()

@@ -9,19 +9,42 @@ MsgHandle::MsgHandle(Client* client) : m_pClient(client)
 
 }
 
+static QString errorText(uint16_t code)
+{
+    switch (static_cast<ErrorCode>(code)) {
+    case ERR_NONE:            return "";
+    case ERR_AUTH_FAILED:     return "用户名或密码错误";
+    case ERR_USER_EXISTS:     return "用户已存在";
+    case ERR_USER_NOT_FOUND:  return "用户不存在";
+    case ERR_USER_OFFLINE:    return "用户不在线";
+    case ERR_ALREADY_FRIEND:  return "已经是好友";
+    case ERR_PATH_UNSAFE:     return "路径不安全";
+    case ERR_DIR_EXISTS:      return "目录已存在";
+    case ERR_DIR_CREATE_FAILED: return "创建目录失败";
+    case ERR_FILE_OPEN_FAILED:  return "文件打开失败";
+    case ERR_FILE_UPLOAD_FAILED: return "文件上传失败";
+    case ERR_SHARE_FILE_FAILED:  return "分享文件失败";
+    case ERR_DELETE_FAILED:   return "删除失败";
+    case ERR_RENAME_FAILED:   return "重命名失败";
+    default:                  return QString("未知错误(%1)").arg(code);
+    }
+}
+
 void MsgHandle::regist()
 {
     if(!pdu || !m_pClient) {
             qDebug() << "Error: pdu or m_pClient is null";
             return;
       }
+    uint16_t code;
+    memcpy(&code, pdu->caData, sizeof(uint16_t));
     bool ret;
-    memcpy(&ret, pdu->caData, sizeof(bool));
-    if(ret) {
-        QMessageBox::information(m_pClient, "提示", "注册成功");
-    } else {
-        QMessageBox::information(m_pClient, "提示", "注册失败");
+    memcpy(&ret, pdu->caData + 2, sizeof(bool));
+    if (code != ERR_NONE || !ret) {
+        QMessageBox::information(m_pClient, "提示", errorText(code));
+        return;
     }
+    QMessageBox::information(m_pClient, "提示", "注册成功");
 }
 
 void MsgHandle::login()
@@ -31,14 +54,38 @@ void MsgHandle::login()
             return;
         }
 
+    uint16_t code;
+    memcpy(&code, pdu->caData, sizeof(uint16_t));
     bool ret;
-    memcpy(&ret, pdu->caData, sizeof(bool));
-    if(ret) {
-        Index::getInstance().show();
-        m_pClient->hide();
-    } else {
-        QMessageBox::information(m_pClient, "提示", "登录失败");
+    memcpy(&ret, pdu->caData + 2, sizeof(bool));
+    if (code != ERR_NONE || !ret) {
+        QMessageBox::information(m_pClient, "提示", errorText(code));
+        return;
     }
+    m_pClient->setLoggedIn();
+
+    // Process offline messages delivered with login response
+    int offlineCount = 0;
+    memcpy(&offlineCount, pdu->caData + 4, sizeof(int));
+    if (offlineCount > 0) {
+        QStringList senders;
+        int offset = 0;
+        for (int i = 0; i < offlineCount; i++) {
+            char senderBuf[32] = {'\0'};
+            memcpy(senderBuf, pdu->caMsg + offset, 32);
+            offset += 32;
+            uint contentLen = 0;
+            memcpy(&contentLen, pdu->caMsg + offset, sizeof(uint));
+            offset += sizeof(uint);
+            offset += contentLen;
+            senders.append(QString::fromUtf8(senderBuf));
+        }
+        QMessageBox::information(m_pClient, "离线消息",
+            QString("您有 %1 条离线消息，来自: %2").arg(offlineCount).arg(senders.join(", ")));
+    }
+
+    Index::getInstance().show();
+    m_pClient->hide();
 }
 
 void MsgHandle::findUser()
@@ -47,8 +94,14 @@ void MsgHandle::findUser()
             qDebug() << "Error: pdu or m_pClient is null";
             return;
       }
+    uint16_t code;
+    memcpy(&code, pdu->caData, sizeof(uint16_t));
     int ret;
-    memcpy(&ret, pdu->caData, sizeof(int));
+    memcpy(&ret, pdu->caData + 2, sizeof(int));
+    if (code != ERR_NONE) {
+        QMessageBox::information(m_pClient, "提示", errorText(code));
+        return;
+    }
     if(ret == 0){
         QMessageBox::information(m_pClient, "提示", "用户没在线");
     }else if(ret == 1){
@@ -79,8 +132,14 @@ void MsgHandle::addFriend()
             qDebug() << "Error: pdu or m_pClient is null";
             return;
       }
+    uint16_t code;
+    memcpy(&code, pdu->caData, sizeof(uint16_t));
     int ret;
-    memcpy(&ret, pdu->caData, sizeof(int));
+    memcpy(&ret, pdu->caData + 2, sizeof(int));
+    if (code != ERR_NONE) {
+        QMessageBox::information(m_pClient, "提示", errorText(code));
+        return;
+    }
     if(ret == -2){
         QMessageBox::information(m_pClient, "提示", "已经成为好友");
     }else{
@@ -95,7 +154,7 @@ void MsgHandle::addFriendResend()
     int ret = QMessageBox::question(m_pClient,"添加好友",QString("用户 %1 添加您为好友，是否同意").arg(caName));
     if(ret == QMessageBox::Yes){
         PDUPtr respdu = makePDU();
-        respdu->uiType =ENUM_MSG_TYPE_ADD_FRIEND_AGREE_REQUEST;
+        respdu->uiType =ENUM_MSG_TYPE_ADD_FRIEND_ACCEPT_REQUEST;
         memcpy(respdu->caData,pdu->caData,64);
         m_pClient->sendMsg(respdu.get());
     }else{
@@ -106,13 +165,15 @@ void MsgHandle::addFriendResend()
 
 void MsgHandle::addFriendAgree()
 {
+    uint16_t code;
+    memcpy(&code, pdu->caData, sizeof(uint16_t));
     bool ret;
-    memcpy(&ret, pdu->caData, sizeof(bool));
-    if(ret) {
-        Index::getInstance().getfriend()->flushFriend();
-    } else {
-        QMessageBox::information(m_pClient, "提示", "添加好友失败");
+    memcpy(&ret, pdu->caData + 2, sizeof(bool));
+    if (code != ERR_NONE || !ret) {
+        QMessageBox::information(m_pClient, "提示", errorText(code));
+        return;
     }
+    Index::getInstance().getfriend()->flushFriend();
 }
 
 void MsgHandle::flushFriend()
@@ -131,13 +192,15 @@ void MsgHandle::flushFriend()
 
 void MsgHandle::deleteFriend()
 {
+    uint16_t code;
+    memcpy(&code, pdu->caData, sizeof(uint16_t));
     bool ret;
-    memcpy(&ret,pdu->caData,sizeof(bool));
-    if(ret){
-        Index::getInstance().getfriend()->flushFriend();
-    }else{
-        QMessageBox::information(m_pClient, "提示", "删除失败");
+    memcpy(&ret, pdu->caData + 2, sizeof(bool));
+    if (code != ERR_NONE || !ret) {
+        QMessageBox::information(m_pClient, "提示", errorText(code));
+        return;
     }
+    Index::getInstance().getfriend()->flushFriend();
 }
 
 void MsgHandle::chat()
@@ -161,13 +224,15 @@ void MsgHandle::chatHistory()
 
 void MsgHandle::createFlieShow()
 {
+    uint16_t code;
+    memcpy(&code, pdu->caData, sizeof(uint16_t));
     bool ret;
-    memcpy(&ret, pdu->caData, sizeof(bool));
-    if(ret) {
-        Index::getInstance().getfile()->flushfile();
-    } else {
-        QMessageBox::information(m_pClient, "提示", "创建文件夹失败");
+    memcpy(&ret, pdu->caData + 2, sizeof(bool));
+    if (code != ERR_NONE || !ret) {
+        QMessageBox::information(m_pClient, "提示", errorText(code));
+        return;
     }
+    Index::getInstance().getfile()->flushfile();
 }
 
 void MsgHandle::flushFile()
@@ -176,7 +241,7 @@ void MsgHandle::flushFile()
         qDebug() << "Error: pdu is null";
         return;
     }
-    
+
     int icount = pdu->uiMsgLen/sizeof(FILE_INFO);
     QList<FILE_INFO*>pFileList;
     for(int i=0;i<icount;i++){
@@ -193,35 +258,41 @@ void MsgHandle::deleteFile()
     if(!pdu){
         return;
     }
+    uint16_t code;
+    memcpy(&code, pdu->caData, sizeof(uint16_t));
     bool ret;
-    memcpy(&ret,pdu->caData,sizeof(bool));
-    if(ret){
-        Index::getInstance().getfile()->flushfile();
-    }else {
-            QMessageBox::information(m_pClient, "提示", "删除文件夹失败");
+    memcpy(&ret, pdu->caData + 2, sizeof(bool));
+    if (code != ERR_NONE || !ret) {
+        QMessageBox::information(m_pClient, "提示", errorText(code));
+        return;
     }
+    Index::getInstance().getfile()->flushfile();
 }
 
 void MsgHandle::renameFile()
 {
+    uint16_t code;
+    memcpy(&code, pdu->caData, sizeof(uint16_t));
     bool ret;
-    memcpy(&ret,pdu->caData,sizeof(bool));
-    if(ret){
-        Index::getInstance().getfile()->flushfile();
-    }else {
-            QMessageBox::information(m_pClient, "提示", "重命名文件夹失败");
+    memcpy(&ret, pdu->caData + 2, sizeof(bool));
+    if (code != ERR_NONE || !ret) {
+        QMessageBox::information(m_pClient, "提示", errorText(code));
+        return;
     }
+    Index::getInstance().getfile()->flushfile();
 }
 
 void MsgHandle::uploadFile()
 {
+    uint16_t code;
+    memcpy(&code, pdu->caData, sizeof(uint16_t));
     bool ret;
-    memcpy(&ret,pdu->caData,sizeof(bool));
-    if(ret){
-        Index::getInstance().getfile()->uploadFile();
-    }else {
-            QMessageBox::information(m_pClient, "提示", "下载文件夹失败");
+    memcpy(&ret, pdu->caData + 2, sizeof(bool));
+    if (code != ERR_NONE || !ret) {
+        QMessageBox::information(m_pClient, "提示", errorText(code));
+        return;
     }
+    Index::getInstance().getfile()->uploadFile();
 }
 
 void MsgHandle::uploadFileDeal()
@@ -248,7 +319,7 @@ void MsgHandle::shareFileDeal()
     int ret = QMessageBox::question(m_pClient,"分享文件",QString("用户 %1 给您分享文件 %2，是否同意").arg(senderName).arg(shareFileName));
     if(ret == QMessageBox::Yes){
         PDUPtr respdu = makePDU(pdu->uiMsgLen);
-        respdu->uiType =ENUM_MSG_TYPE_SHARE_FILE_AGREE_REQUEST;
+        respdu->uiType =ENUM_MSG_TYPE_SHARE_FILE_ACCEPT_REQUEST;
         memcpy(respdu->caMsg,pdu->caMsg,pdu->uiMsgLen);
         memcpy(respdu->caData,m_pClient->m_strLoginName.toStdString().c_str(),32);
         m_pClient->sendMsg(respdu.get());
@@ -259,12 +330,13 @@ void MsgHandle::shareFileDeal()
 
 void MsgHandle::shareFileAgree()
 {
+    uint16_t code;
+    memcpy(&code, pdu->caData, sizeof(uint16_t));
     bool ret;
-    memcpy(&ret, pdu->caData, sizeof(bool));
-    if(ret) {
-        QMessageBox::information(m_pClient, "提示", "分享文件成功");
-    } else {
-        QMessageBox::information(m_pClient, "提示", "分享文件失败");
+    memcpy(&ret, pdu->caData + 2, sizeof(bool));
+    if (code != ERR_NONE || !ret) {
+        QMessageBox::information(m_pClient, "提示", errorText(code));
+        return;
     }
+    QMessageBox::information(m_pClient, "提示", "分享文件成功");
 }
-

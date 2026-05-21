@@ -1,0 +1,4 @@
+{
+  "server": { "ip": "127.0.0.1", "port": 5000, "tls": false },
+  "storage": { "root_path": "./fliesys" }
+}

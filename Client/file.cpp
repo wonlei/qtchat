@@ -37,6 +37,7 @@ void File::uploadFile()
         PDUPtr pdu(rawPdu);
         Client::getInstance().sendMsg(pdu.get());
     },Qt::QueuedConnection);
+    connect(uploader,&Uploader::finished,uploader,&QObject::deleteLater);
     uploader->start();
 }
 
@@ -64,7 +65,7 @@ void File::flushfile()
 {
     PDUPtr pdu = makePDU(m_strCurPath.toStdString().size()+1);
     memcpy(pdu->caMsg,m_strCurPath.toStdString().c_str(),m_strCurPath.toStdString().size());
-    pdu->uiType = ENUM_MSG_TYPE_FLUSH_FILE_REQUEST;
+    pdu->uiType = ENUM_MSG_TYPE_REFRESH_FILE_REQUEST;
     Client::getInstance().sendMsg(pdu.get());
 }
 
@@ -76,10 +77,11 @@ void File::on_upload_PB_clicked()
     QString strFileName = m_strUploadPath.right(m_strUploadPath.size()-index-1);
     QFile file(m_strUploadPath);
     qint64 iFileSize = file.size();
-    PDUPtr pdu = makePDU(m_strUploadPath.size()+1);
+    QByteArray curPathBytes = m_strCurPath.toUtf8();
+    PDUPtr pdu = makePDU(curPathBytes.size() + 1);
     memcpy(pdu->caData,strFileName.toStdString().c_str(),strFileName.size());
     memcpy(pdu->caData+32,&iFileSize,sizeof(qint64));
-    memcpy(pdu->caMsg,m_strCurPath.toStdString().c_str(),m_strUploadPath.toStdString().size());
+    memcpy(pdu->caMsg, curPathBytes.constData(), curPathBytes.size() + 1);
     pdu->uiType = ENUM_MSG_TYPE_UPLOAD_FILE_INIT_REQUEST;
     Client::getInstance().sendMsg(pdu.get());
 }

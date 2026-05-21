@@ -1,4 +1,5 @@
-# Qt build outputs
+# Build outputs
+build/
 build-*/
 debug/
 release/

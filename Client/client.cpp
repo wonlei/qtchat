@@ -1,6 +1,8 @@
 #include "client.h"
 #include "index.h"
+#include "../common/config.h"
 #include "../common/protocol.h"
+#include "../common/packet.h"
 #include "ui_client.h"
 #include "msghandle.h"
 #include <QDebug>
@@ -9,7 +11,6 @@
 #include <QFile>
 #include <QHostAddress>
 #include <QMessageBox>
-#include <QCryptographicHash>
 #include <qmessagebox.h>
 
 Client::Client(QWidget *parent)
@@ -18,27 +19,84 @@ Client::Client(QWidget *parent)
 {
     ui->setupUi(this);
     loadConfig();
-    socket.connectToHost(QHostAddress(m_strlIP),m_usPort);
-    connect(&socket,&QTcpSocket::connected,this,&Client::showConnect);
-    connect(&socket,&QTcpSocket::readyRead,this,&Client::recvMsg);
+    if (m_bUseTls) {
+        socket.connectToHostEncrypted(m_strlIP, m_usPort);
+    } else {
+        socket.connectToHost(QHostAddress(m_strlIP), m_usPort);
+    }
+    m_state = ConnectionState::Connecting;
+    connect(&socket, &QSslSocket::connected, this, &Client::showConnect);
+    connect(&socket, &QSslSocket::readyRead, this, &Client::recvMsg);
+    connect(&socket, &QSslSocket::disconnected, this, [this]() {
+        m_state = ConnectionState::Disconnected;
+        qDebug() << "Disconnected from server";
+    });
+
+    m_heartbeatTimer = new QTimer(this);
+    connect(m_heartbeatTimer, &QTimer::timeout, this, &Client::sendHeartbeat);
+    m_heartbeatTimer->start(15000);
+
+    // Register message handlers
+    m_dispatcher.registerHandler(ENUM_MSG_TYPE_REGISTER_RESPOND, [this](PDU* p) {
+        MsgHandle mh(this); mh.pdu = p; mh.regist(); return nullptr; });
+    m_dispatcher.registerHandler(ENUM_MSG_TYPE_LOGIN_RESPOND, [this](PDU* p) {
+        MsgHandle mh(this); mh.pdu = p; mh.login(); return nullptr; });
+    m_dispatcher.registerHandler(ENUM_MSG_TYPE_FIND_USER_RESPOND, [this](PDU* p) {
+        MsgHandle mh(this); mh.pdu = p; mh.findUser(); return nullptr; });
+    m_dispatcher.registerHandler(ENUM_MSG_TYPE_ONLINE_USER_RESPOND, [this](PDU* p) {
+        MsgHandle mh(this); mh.pdu = p; mh.onlineUser(); return nullptr; });
+    m_dispatcher.registerHandler(ENUM_MSG_TYPE_ADD_FRIEND_RESPOND, [this](PDU* p) {
+        MsgHandle mh(this); mh.pdu = p; mh.addFriend(); return nullptr; });
+    m_dispatcher.registerHandler(ENUM_MSG_TYPE_ADD_FRIEND_REQUEST, [this](PDU* p) {
+        MsgHandle mh(this); mh.pdu = p; mh.addFriendResend(); return nullptr; });
+    m_dispatcher.registerHandler(ENUM_MSG_TYPE_ADD_FRIEND_ACCEPT_RESPOND, [this](PDU* p) {
+        MsgHandle mh(this); mh.pdu = p; mh.addFriendAgree(); return nullptr; });
+    m_dispatcher.registerHandler(ENUM_MSG_TYPE_REFRESH_FRIEND_RESPOND, [this](PDU* p) {
+        MsgHandle mh(this); mh.pdu = p; mh.flushFriend(); return nullptr; });
+    m_dispatcher.registerHandler(ENUM_MSG_TYPE_DELETE_FRIEND_RESPOND, [this](PDU* p) {
+        MsgHandle mh(this); mh.pdu = p; mh.deleteFriend(); return nullptr; });
+    m_dispatcher.registerHandler(ENUM_MSG_TYPE_CHAT_REQUEST, [this](PDU* p) {
+        MsgHandle mh(this); mh.pdu = p; mh.chat(); return nullptr; });
+    m_dispatcher.registerHandler(ENUM_MSG_TYPE_CHAT_HISTORY_RESPOND, [this](PDU* p) {
+        MsgHandle mh(this); mh.pdu = p; mh.chatHistory(); return nullptr; });
+    m_dispatcher.registerHandler(ENUM_MSG_TYPE_CREATE_FILE_RESPOND, [this](PDU* p) {
+        MsgHandle mh(this); mh.pdu = p; mh.createFlieShow(); return nullptr; });
+    m_dispatcher.registerHandler(ENUM_MSG_TYPE_REFRESH_FILE_RESPOND, [this](PDU* p) {
+        MsgHandle mh(this); mh.pdu = p; mh.flushFile(); return nullptr; });
+    m_dispatcher.registerHandler(ENUM_MSG_TYPE_DELETE_FILE_RESPOND, [this](PDU* p) {
+        MsgHandle mh(this); mh.pdu = p; mh.deleteFile(); return nullptr; });
+    m_dispatcher.registerHandler(ENUM_MSG_TYPE_RENAME_FILE_RESPOND, [this](PDU* p) {
+        MsgHandle mh(this); mh.pdu = p; mh.renameFile(); return nullptr; });
+    m_dispatcher.registerHandler(ENUM_MSG_TYPE_UPLOAD_FILE_INIT_RESPOND, [this](PDU* p) {
+        MsgHandle mh(this); mh.pdu = p; mh.uploadFile(); return nullptr; });
+    m_dispatcher.registerHandler(ENUM_MSG_TYPE_UPLOAD_FILE_DEAL_RESPOND, [this](PDU* p) {
+        MsgHandle mh(this); mh.pdu = p; mh.uploadFileDeal(); return nullptr; });
+    m_dispatcher.registerHandler(ENUM_MSG_TYPE_SHARE_FILE_RESPOND, [this](PDU* p) {
+        MsgHandle mh(this); mh.pdu = p; mh.shareFile(); return nullptr; });
+    m_dispatcher.registerHandler(ENUM_MSG_TYPE_SHARE_FILE_REQUEST, [this](PDU* p) {
+        MsgHandle mh(this); mh.pdu = p; mh.shareFileDeal(); return nullptr; });
+    m_dispatcher.registerHandler(ENUM_MSG_TYPE_SHARE_FILE_ACCEPT_RESPOND, [this](PDU* p) {
+        MsgHandle mh(this); mh.pdu = p; mh.shareFileAgree(); return nullptr; });
 }
 
 
 
 void Client::loadConfig()
 {
-    QFile file(":/connect.config");
-    if(file.open(QIODevice::ReadOnly)){
-        QString s = file.readAll();
-        QStringList slist=s.split("\r\n");
-        m_strlIP=slist[0];
-        m_usPort=slist[1].toUShort();
-        m_strRootPath =slist[2];
-        qDebug()<<"m_strlIP"<<m_strlIP<<" m_usPort"<<m_usPort;
-        file.close();
-    }else{
-        qDebug() << "打印失败";
+    AppConfig cfg;
+    if (!cfg.loadFromFile(":/config.json")) {
+        // Fallback to legacy format
+        QFile file(":/connect.config");
+        if (file.open(QIODevice::ReadOnly)) {
+            cfg.loadLegacy(file.readAll());
+            file.close();
+        }
     }
+    m_strlIP     = cfg.serverIp;
+    m_usPort     = cfg.serverPort;
+    m_strRootPath = cfg.rootPath;
+    m_bUseTls    = cfg.useTls;
+    qDebug()<<"m_strlIP"<<m_strlIP<<" m_usPort"<<m_usPort<<" TLS"<<m_bUseTls;
 }
 
 Client::~Client()
@@ -54,112 +112,42 @@ Client &Client::getInstance()
 
 void Client::sendMsg(const PDU *pdu)
 {
-    if(pdu == nullptr) return;
-    socket.write((char*)pdu, pdu->uiTotalLen);
-    qDebug()<<"pdu->uiMsgLen "<<pdu->uiMsgLen
-           <<"pdu->uiTotalLen "<<pdu->uiTotalLen
-          <<"pdu->uiType "<<pdu->uiType
-         <<"pdu->caData "<<pdu->caData
-           <<"pdu->caData+32 "<<pdu->caData+32
-        <<"pdu->caMsg "<<pdu->caMsg;
+    if (pdu == nullptr) return;
+
+    // Send in new Frame format
+    QByteArray meta(pdu->caData, 64);
+    QByteArray payload(pdu->caMsg, pdu->uiMsgLen);
+
+    Frame f;
+    f.msg_type = pdu->uiType;
+    f.meta = meta;
+    f.payload = payload;
+
+    QByteArray frameData = f.serialize();
+    socket.write(frameData);
+    qDebug() << "Frame sent:" << f.msg_type << "total_len:" << frameData.size();
 }
 
 
+void Client::sendHeartbeat()
+{
+    if (m_state != ConnectionState::LoggedIn) return;
+    PDUPtr pdu = makePDU();
+    if (!pdu) return;
+    pdu->uiType = ENUM_MSG_TYPE_HEARTBEAT_REQUEST;
+    sendMsg(pdu.get());
+}
+
 void Client::handleMsg(PDU *pdu)
 {
-    if(pdu == NULL)return;
-    MsgHandle m_pmh(this);
-    m_pmh.pdu = pdu;
-    switch (pdu->uiType) {
-    case ENUM_MSG_TYPE_REGISE_RESPOND: {
-        m_pmh.regist();
-        break;
-    }
-    case ENUM_MSG_TYPE_LOGIN_RESPOND: {
-        m_pmh.login();
-        break;
-    }
-    case ENUM_MSG_TYPE_FIND_USER_RESPOND: {
-        m_pmh.findUser();
-        break;
-    }
-    case ENUM_MSG_TYPE_ONLINE_USER_RESPOND:{
-        m_pmh.onlineUser();
-        break;
-    }
-    case ENUM_MSG_TYPE_ADD_FRIEND_RESPOND:{
-        m_pmh.addFriend();
-        break;
-    }
-    case ENUM_MSG_TYPE_ADD_FRIEND_REQUEST:{
-        m_pmh.addFriendResend();
-        break;
-    }
-    case ENUM_MSG_TYPE_ADD_FRIEND_AGREE_RESPOND:{
-        m_pmh.addFriendAgree();
-        break;
-    }
-    case ENUM_MSG_TYPE_FLUSH_FRIEND_RESPOND:{
-        m_pmh.flushFriend();
-        break;
-    }
-    case ENUM_MSG_TYPE_DELETE_FRIEND_RESPOND:{
-        m_pmh.deleteFriend();
-        break;
-    }
-    case ENUM_MSG_TYPE_CHAT_REQUEST:{
-        m_pmh.chat();
-        break;
-    }
-    case ENUM_MSG_TYPE_CHAT_HISTORY_RESPOND:{
-        m_pmh.chatHistory();
-        break;
-    }
-    case ENUM_MSG_TYPE_CREATE_FILE_RESPOND:{
-        m_pmh.createFlieShow();
-        break;
-    }
-    case ENUM_MSG_TYPE_FLUSH_FILE_RESPOND:{
-        m_pmh.flushFile();
-        break;
-    }
-    case ENUM_MSG_TYPE_DELETE_FILE_RESPOND:{
-        m_pmh.deleteFile();
-        break;
-    }
-    case ENUM_MSG_TYPE_RENAME_FILE_RESPOND:{
-        m_pmh.renameFile();
-        break;
-    }
-    case ENUM_MSG_TYPE_UPLOAD_FILE_INIT_RESPOND:{
-        m_pmh.uploadFile();
-        break;
-    }
-    case ENUM_MSG_TYPE_UPLOAD_FILE_DEAL_RESPOND:{
-        m_pmh.uploadFileDeal();
-        break;
-    }
-    case ENUM_MSG_TYPE_SHARE_FILE_RESPOND:{
-        m_pmh.shareFile();
-        break;
-    }
-    case ENUM_MSG_TYPE_SHARE_FILE_REQUEST:{
-        m_pmh.shareFileDeal();
-        break;
-    }
-    case ENUM_MSG_TYPE_SHARE_FILE_AGREE_RESPOND:{
-        m_pmh.shareFileAgree();
-        break;
-    }
-    default:
-        break;
-    }
-    return;
+    if (!pdu) return;
+    m_dispatcher.dispatch(pdu);
 }
 
 
 void Client::showConnect()
 {
+    m_state = ConnectionState::Connected;
     qDebug()<<"连接服务器成功";
 }
 
@@ -169,7 +157,7 @@ void Client::showConnect()
 
 void Client::on_regist_PB_clicked()
 {
-    if (socket.state() != QAbstractSocket::ConnectedState) {
+    if (m_state < ConnectionState::Connected) {
         QMessageBox::warning(this, "错误", "未连接到服务器，请稍后重试");
         return;
     }
@@ -181,10 +169,11 @@ void Client::on_regist_PB_clicked()
         return;
     }
     PDUPtr pdu = makePDU();
-    pdu->uiType = ENUM_MSG_TYPE_REGISE_REQUEST;
-    memcpy(pdu->caData,namestr.toStdString().c_str(),32);
-    QByteArray pwdHash = QCryptographicHash::hash(pwdstr.toUtf8(), QCryptographicHash::Sha256);
-    memcpy(pdu->caData+32, pwdHash.constData(), 32);
+    pdu->uiType = ENUM_MSG_TYPE_REGISTER_REQUEST;
+    std::string name = namestr.toStdString();
+    std::string pwd = pwdstr.toStdString();
+    memcpy(pdu->caData, name.c_str(), 32);
+    memcpy(pdu->caData + 32, pwd.c_str(), 32);
     sendMsg(pdu.get());
 }
 
@@ -196,13 +185,46 @@ void Client::recvMsg()
 
     QByteArray data = socket.readAll();
     buffer.append(data);
-    while(buffer.size()>=int(sizeof(PDU))){
-        PDU* pdu = (PDU*)buffer.data();
-        if(buffer.size()<int(pdu->uiTotalLen)){
-            break;
+    qDebug() << "Client recv: buffer size" << buffer.size();
+
+    while (buffer.size() >= 4) {
+        uint32_t firstWord;
+        memcpy(&firstWord, buffer.constData(), 4);
+        bool isFrame = (firstWord & Frame::MAGIC_MASK) != 0;
+
+        if (isFrame) {
+            uint32_t totalLen = firstWord & ~Frame::MAGIC_MASK;
+            qDebug() << "Client: Frame detected, totalLen" << totalLen << "buffer" << buffer.size();
+            if (buffer.size() < static_cast<int>(totalLen)) break;
+
+            auto f = Frame::deserialize(buffer.left(totalLen));
+            if (!f) {
+                qDebug() << "Client: deserialize FAILED for totalLen" << totalLen;
+                buffer.remove(0, totalLen);
+                continue;
+            }
+            qDebug() << "Client: Frame OK type" << f->msg_type << "meta" << f->meta.size() << "payload" << f->payload.size();
+            buffer.remove(0, totalLen);
+
+            // Convert Frame to PDU for legacy handler
+            uint metaLen = qMin(f->meta.size(), 64);
+            PDUPtr pdu = makePDU(f->payload.size());
+            pdu->uiType = f->msg_type;
+            if (metaLen > 0)
+                memcpy(pdu->caData, f->meta.constData(), metaLen);
+            if (f->payload.size() > 0)
+                memcpy(pdu->caMsg, f->payload.constData(), f->payload.size());
+
+            handleMsg(pdu.get());
+        } else {
+            // Legacy PDU format
+            if (buffer.size() < static_cast<int>(sizeof(PDU))) break;
+            PDU* pdu = reinterpret_cast<PDU*>(buffer.data());
+            if (buffer.size() < static_cast<int>(pdu->uiTotalLen)) break;
+
+            handleMsg(pdu);
+            buffer.remove(0, pdu->uiTotalLen);
         }
-        handleMsg(pdu);
-        buffer.remove(0,pdu->uiTotalLen);
     }
 
     m_bRecving = false;
@@ -210,7 +232,7 @@ void Client::recvMsg()
 
 void Client::on_login_PB_clicked()
 {
-    if (socket.state() != QAbstractSocket::ConnectedState) {
+    if (m_state < ConnectionState::Connected) {
         QMessageBox::warning(this, "错误", "未连接到服务器，请稍后重试");
         return;
     }
@@ -224,9 +246,10 @@ void Client::on_login_PB_clicked()
     PDUPtr pdu = makePDU();
     pdu->uiType = ENUM_MSG_TYPE_LOGIN_REQUEST;
     m_strLoginName = namestr;
-    memcpy(pdu->caData,namestr.toStdString().c_str(),32);
-    QByteArray pwdHash = QCryptographicHash::hash(pwdstr.toUtf8(), QCryptographicHash::Sha256);
-    memcpy(pdu->caData+32, pwdHash.constData(), 32);
+    std::string name = namestr.toStdString();
+    std::string pwd = pwdstr.toStdString();
+    memcpy(pdu->caData, name.c_str(), 32);
+    memcpy(pdu->caData + 32, pwd.c_str(), 32);
     sendMsg(pdu.get());
 
 }

@@ -12,8 +12,9 @@ MyTcpServer &MyTcpServer::getInstance()
 void MyTcpServer::incomingConnection(qintptr handle)
 {
     qDebug() << "连接客户端成功";
-    MyTcpSocket *pTcpSocket = new MyTcpSocket;
+    MyTcpSocket *pTcpSocket = new MyTcpSocket(*m_db, this, m_rootPath);
     pTcpSocket->setSocketDescriptor(handle);
+    pTcpSocket->m_bUseTls = m_bUseTls;
 
     {
         QMutexLocker locker(&m_mutex);
@@ -21,6 +22,10 @@ void MyTcpServer::incomingConnection(qintptr handle)
         for(int i = 0; i < m_tcpSocketList.size(); i++) {
             qDebug() << m_tcpSocketList[i];
         }
+    }
+
+    if (pTcpSocket->m_bUseTls) {
+        pTcpSocket->startEncryption();
     }
 
     ClientTask * task = new ClientTask(pTcpSocket);
@@ -32,7 +37,6 @@ void MyTcpServer::removeSocket(MyTcpSocket *mytcpsocket)
     QMutexLocker locker(&m_mutex);
     if (m_tcpSocketList.removeOne(mytcpsocket)) {
         mytcpsocket->deleteLater();
-        mytcpsocket = NULL;
     }
     for(int i = 0; i<m_tcpSocketList.size();i++){
         qDebug()<<m_tcpSocketList[i]->m_strLoginName;

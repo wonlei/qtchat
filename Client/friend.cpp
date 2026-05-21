@@ -28,7 +28,7 @@ void Friend::flushFriend()
     PDUPtr pdu = makePDU();
     QString curName = Client::getInstance().m_strLoginName;
     memcpy(pdu->caData,curName.toStdString().c_str(),32);
-    pdu->uiType = ENUM_MSG_TYPE_FLUSH_FRIEND_REQUEST;
+    pdu->uiType = ENUM_MSG_TYPE_REFRESH_FRIEND_REQUEST;
     Client::getInstance().sendMsg(pdu.get());
 }
 

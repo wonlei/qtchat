@@ -2,36 +2,47 @@
 #include <QDebug>
 #include <QSqlError>
 #include <QSqlQuery>
+#include "../common/password.h"
 
 OperateDB::OperateDB(QObject *parent) : QObject(parent)
 {
-    m_db = QSqlDatabase::addDatabase("QMYSQL");
 }
 
 OperateDB::~OperateDB()
 {
-    m_db.close();
+    QSqlDatabase::removeDatabase(m_connBaseName);
 }
 
-void OperateDB::connect()
+QSqlDatabase OperateDB::db()
 {
-    m_db.setHostName(qEnvironmentVariable("DB_HOST", "localhost"));
-    int port = qEnvironmentVariableIntValue("DB_PORT");
-    m_db.setPort(port > 0 ? port : 3306);
-    m_db.setUserName(qEnvironmentVariable("DB_USER", "root"));
-    m_db.setPassword(qEnvironmentVariable("DB_PASS", "200220"));
-    m_db.setDatabaseName(qEnvironmentVariable("DB_NAME", "mydb2503"));
-    if(m_db.open()){
-        qDebug()<<"连接数据库成功";
-    }else{
-        qDebug()<<"数据库连接失败"<<m_db.lastError().text();
+    if (m_threadConns.hasLocalData()) {
+        return *m_threadConns.localData();
     }
+    QString connName = QString("%1_%2").arg(m_connBaseName).arg(m_connCounter++);
+    QSqlDatabase conn = QSqlDatabase::addDatabase("QMYSQL", connName);
+    conn.setHostName(m_config.dbHost.isEmpty() ? "localhost" : m_config.dbHost);
+    conn.setPort(m_config.dbPort > 0 ? m_config.dbPort : 3306);
+    conn.setUserName(m_config.dbUser.isEmpty() ? "root" : m_config.dbUser);
+    conn.setPassword(m_config.dbPass);
+    conn.setDatabaseName(m_config.dbName.isEmpty() ? "wonchat" : m_config.dbName);
+    if (!conn.open()) {
+        qWarning() << "DB connection failed:" << conn.lastError().text();
+    } else {
+        qDebug() << "DB connected:" << connName;
+    }
+    QSqlDatabase* ptr = new QSqlDatabase(conn);
+    m_threadConns.setLocalData(ptr);
+    return conn;
 }
 
-OperateDB &OperateDB::getInstance()
+void OperateDB::setConfig(const AppConfig& cfg)
 {
-    static OperateDB instance;
-    return instance;
+    m_config = cfg;
+}
+
+void OperateDB::init()
+{
+    qDebug() << "Database pool initialized, connections created per thread on demand";
 }
 
 bool OperateDB::handleRegist(char *caName, char *caPwd)
@@ -40,23 +51,32 @@ bool OperateDB::handleRegist(char *caName, char *caPwd)
         return false;
     }
 
-    QSqlQuery q;
+    QSqlQuery q(db());
 
-    // 检查用户是否存在
     q.prepare("select * from user_info where name = ?");
     q.addBindValue(caName);
     if (!q.exec()) {
+        qDebug() << "handleRegist select failed:" << q.lastError().text();
         return false;
     }
     if (q.next()) {
-        return false; // 用户已存在
+        qDebug() << "handleRegist: user already exists:" << caName;
+        return false;
     }
 
-    // 插入新用户
-    q.prepare("insert into user_info(name, pwd) values(?, ?)");
+    QByteArray salt = generateSalt();
+    QByteArray pwdHash = hashPassword(QByteArray(caPwd), salt);
+
+    q.prepare("insert into user_info(name, pwd, salt) values(?, ?, ?)");
     q.addBindValue(caName);
-    q.addBindValue(caPwd);
-    return q.exec();
+    q.addBindValue(pwdHash);
+    q.addBindValue(salt);
+    if (!q.exec()) {
+        qDebug() << "handleRegist insert failed:" << q.lastError().text();
+        return false;
+    }
+    qDebug() << "handleRegist success:" << caName;
+    return true;
 }
 
 bool OperateDB::handleLogin(char *caName, char *caPwd)
@@ -65,25 +85,39 @@ bool OperateDB::handleLogin(char *caName, char *caPwd)
         return false;
     }
 
-    QSqlQuery q;
-    q.prepare("select * from user_info where name = ? and pwd = ?");
+    QSqlQuery q(db());
+    q.prepare("select pwd, salt from user_info where name = ?");
     q.addBindValue(caName);
-    q.addBindValue(caPwd);
-    if (q.exec() && q.next()) {
-        q.prepare("update user_info set online = 1 where name = ? and pwd = ?");
-        q.addBindValue(caName);
-        q.addBindValue(caPwd);
-        q.exec();
-        return true;
+    if (!q.exec()) {
+        qDebug() << "handleLogin select failed:" << q.lastError().text();
+        return false;
     }
-    return false;
+    if (!q.next()) {
+        qDebug() << "handleLogin: user not found:" << caName;
+        return false;
+    }
+
+    QByteArray storedHash = q.value(0).toByteArray();
+    QByteArray storedSalt = q.value(1).toByteArray();
+    QByteArray computedHash = hashPassword(QByteArray(caPwd), storedSalt);
+
+    if (storedHash != computedHash) {
+        qDebug() << "handleLogin: password mismatch for:" << caName;
+        return false;
+    }
+
+    q.prepare("update user_info set online = 1 where name = ?");
+    q.addBindValue(caName);
+    q.exec();
+    qDebug() << "handleLogin success:" << caName;
+    return true;
 }
 
 void OperateDB::clientOffLine(const char *caName)
 {
     if(caName == NULL) return;
 
-    QSqlQuery q;
+    QSqlQuery q(db());
     q.prepare("update user_info set online = 0 where name = ?");
     q.addBindValue(caName);
     q.exec();
@@ -94,7 +128,7 @@ int OperateDB::handleFinduser(const char *caName)
 {
     if(caName == NULL) return -1;
 
-    QSqlQuery q;
+    QSqlQuery q(db());
     q.prepare("select online from user_info where name = ?");
     q.addBindValue(caName);
     q.exec();
@@ -110,7 +144,7 @@ int OperateDB::handleAddFriend(const char *caCurName, const char *caTarName)
         return -1;
     }
 
-    QSqlQuery q;
+    QSqlQuery q(db());
     q.prepare(R"(
         SELECT * FROM friend
         WHERE
@@ -147,7 +181,7 @@ int OperateDB::handleAddFriend(const char *caCurName, const char *caTarName)
 QStringList OperateDB::handleOnline()
 {
     QString sql = QString("select name from user_info where online = 1");
-    QSqlQuery q;
+    QSqlQuery q(db());
     q.exec(sql);
     QStringList res;
     while(q.next()){
@@ -161,7 +195,7 @@ QStringList OperateDB::handleFlush(const char* curName)
     QStringList res;
     if(curName == nullptr) return res;
 
-    QSqlQuery q;
+    QSqlQuery q(db());
     q.prepare(R"(
         select name from user_info
         where id in(
@@ -187,7 +221,7 @@ bool OperateDB::handleAddFriendAgree(const char* caCurName, const char* caTarNam
         return false;
     }
 
-    QSqlQuery q;
+    QSqlQuery q(db());
     q.prepare(R"(
         insert into friend(user_id, friend_id)
         select u1.id, u2.id
@@ -205,7 +239,7 @@ bool OperateDB::handleDeleteFriend(const char* caCurName, const char* caTarName)
         return false;
     }
 
-    QSqlQuery q;
+    QSqlQuery q(db());
     q.prepare(R"(
         delete from friend
         where (user_id = (select id from user_info where name = ?)
@@ -223,7 +257,7 @@ bool OperateDB::handleDeleteFriend(const char* caCurName, const char* caTarName)
 void OperateDB::saveMessage(const char *sender, const char *receiver, const char *content)
 {
     if (!sender || !receiver || !content) return;
-    QSqlQuery q;
+    QSqlQuery q(db());
     q.prepare("INSERT INTO message (sender, receiver, content) VALUES (?, ?, ?)");
     q.addBindValue(sender);
     q.addBindValue(receiver);
@@ -235,7 +269,7 @@ QByteArray OperateDB::getChatHistory(const char *user1, const char *user2)
 {
     if (!user1 || !user2) return QByteArray();
 
-    QSqlQuery q;
+    QSqlQuery q(db());
     q.prepare(R"(
         SELECT sender, content FROM message
         WHERE (sender = ? AND receiver = ?) OR (sender = ? AND receiver = ?)
@@ -280,4 +314,50 @@ QByteArray OperateDB::getChatHistory(const char *user1, const char *user2)
     }
 
     return result;
+}
+
+bool OperateDB::isUserOnline(const char *name)
+{
+    if (!name) return false;
+    QSqlQuery q(db());
+    q.prepare("SELECT online FROM user_info WHERE name = ?");
+    q.addBindValue(name);
+    if (q.exec() && q.next()) {
+        return q.value(0).toInt() == 1;
+    }
+    return false;
+}
+
+void OperateDB::saveOfflineMessage(const char *sender, const char *receiver, const char *content)
+{
+    if (!sender || !receiver || !content) return;
+    QSqlQuery q(db());
+    q.prepare("INSERT INTO offline_message (sender, receiver, content) VALUES (?, ?, ?)");
+    q.addBindValue(sender);
+    q.addBindValue(receiver);
+    q.addBindValue(content);
+    q.exec();
+}
+
+QList<QPair<QString,QString>> OperateDB::getOfflineMessages(const char *receiver)
+{
+    QList<QPair<QString,QString>> result;
+    if (!receiver) return result;
+    QSqlQuery q(db());
+    q.prepare("SELECT sender, content, id FROM offline_message WHERE receiver = ? ORDER BY created_at ASC LIMIT 50");
+    q.addBindValue(receiver);
+    if (!q.exec()) return result;
+    while (q.next()) {
+        result.append({q.value(0).toString(), q.value(1).toString()});
+    }
+    return result;
+}
+
+void OperateDB::clearOfflineMessages(const char *receiver)
+{
+    if (!receiver) return;
+    QSqlQuery q(db());
+    q.prepare("DELETE FROM offline_message WHERE receiver = ?");
+    q.addBindValue(receiver);
+    q.exec();
 }

@@ -17,6 +17,7 @@ DEFINES += QT_DEPRECATED_WARNINGS
 
 SOURCES += \
     chat.cpp \
+    ../common/config.cpp \
     file.cpp \
     friend.cpp \
     index.cpp \
@@ -25,11 +26,16 @@ SOURCES += \
     msghandle.cpp \
     onlineuser.cpp \
     ../common/protocol.cpp \
+    ../common/packet.cpp \
+    ../common/password.cpp \
+    ../common/pathsafety.cpp \
+    ../common/messagedispatcher.cpp \
     sharefile.cpp \
     uploader.cpp
 
 HEADERS += \
     chat.h \
+    ../common/config.h \
     client.h \
     file.h \
     friend.h \
@@ -37,6 +43,10 @@ HEADERS += \
     msghandle.h \
     onlineuser.h \
     ../common/protocol.h \
+    ../common/packet.h \
+    ../common/password.h \
+    ../common/pathsafety.h \
+    ../common/messagedispatcher.h \
     sharefile.h \
     uploader.h
 

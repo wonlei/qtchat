@@ -6,6 +6,9 @@
 #include <QObject>
 #include <qfile.h>
 
+class OperateDB;
+class MyTcpServer;
+
 class MsgHandler
 {
 public:
@@ -13,10 +16,13 @@ public:
     QFile m_fUploadFile;
     qint64 m_iUploadSize;
     qint64 m_iReceivedSize;
-    MsgHandler();
+    MsgHandler(OperateDB& db, MyTcpServer* server, const QString& rootPath);
 
-    static bool isPathSafe(const QString& path, const QString& rootPath);
-    static PDUPtr pathErrorResponse(ENUM_MSG_TYPE type);
+    OperateDB& m_db;
+    MyTcpServer* m_server;
+    QString m_rootPath;
+
+    static PDUPtr pathErrorResponse(ENUM_MSG_TYPE type, ErrorCode err = ERR_PATH_UNSAFE);
 
     PDUPtr regist();
     PDUPtr login(QString& strName);

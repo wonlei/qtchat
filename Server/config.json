@@ -1,0 +1,5 @@
+{
+  "server": { "ip": "127.0.0.1", "port": 5000, "tls": false },
+  "storage": { "root_path": "./fliesys" },
+  "database": { "host": "localhost", "port": 3306, "name": "mydb2503", "user": "root", "password": "200220" }
+}
